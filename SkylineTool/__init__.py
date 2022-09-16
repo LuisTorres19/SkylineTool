@@ -22,11 +22,10 @@ bl_info = {
     "category" : "Generic"
 }
 
-import bpy
+import bpy, bmesh
 import numpy as np
-import os
 from bpy.types import Panel, Operator
-from bpy_extras.io_utils import ImportHelper
+import cv2
 
 matrix = []
 
@@ -37,6 +36,10 @@ class MyProperties(bpy.types.PropertyGroup):
     )
     matriz : bpy.props.StringProperty(
         name= 'Ruta de matriz',
+        subtype= 'FILE_PATH'
+    )
+    imagen : bpy.props.StringProperty(
+        name='Ruta de la imagen',
         subtype= 'FILE_PATH'
     )
 
@@ -59,22 +62,10 @@ class ST_PT_Panel(Panel):
         row.prop(context.scene.propiedades, 'matriz')
 
         row = layout.row()
-        row.operator("text.load_matrix_operator")
-
-        row = layout.row()
         row.operator("text.clean_scene_operator")
 
         row = layout.row()
         row.operator("text.create_skyline_operator")
-
-class ST_OP_LoadMatrix(Operator, ImportHelper):
-    bl_idname = "text.load_matrix_operator"
-    bl_label = "Cargar Matriz"
-
-    def execute(self, context):
-        self.report({'INFO'}, 'Input File Path: ' + str(self.filepath))
-        context.scene.propiedades.matriz = self.filepath
-        return {'FINISHED'}
 
 
 class ST_OP_CleanScene(Operator):
@@ -89,8 +80,7 @@ class ST_OP_CleanScene(Operator):
         bpy.ops.object.delete()
         return{'FINISHED'}
 
-
-class ST_OP_CreateSkyline(Operator):
+class ST_OP_CreateSkylineFromMatrix(Operator):
     bl_idname = "text.create_skyline_operator"
     bl_label = "Crear Escena"
 
@@ -114,9 +104,46 @@ class ST_OP_CreateSkyline(Operator):
                             )
 
         return {'FINISHED'}
+class ST_OP_Create_CreateSkylineFromImage(Operator):
+    def execute(self, context):
+        #Import image from path
+        img = cv2.imread(context.scene.propiedades.imagen)
+        #Calculate area of image in pixels
+        dimensions = img.shape
+        area = dimensions[0] * dimensions[1]
+        #Process image in Grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        ret,thresh = cv2.threshold(gray,150,255,cv2.THRESH_BINARY_INV)
+        #Compute Contours in image
+        contours, hierarchy = cv2.findContours(thresh,cv2.RETR_TREE,cv2.CHAIN_APPROX_NONE)
+        
+        for i in contours:
+            if cv2.contourArea(i) > 0.01 * area:
+                #aprox each contour as a Poly
+                epsilon = 0.01 * cv2.arcLength(i, True)
+                aprox = cv2.approxPolyDP(i,epsilon, True)
+                #Proportional reduction from pixels to units
+                verts = aprox * -0.3
+                #Create a new mesh
+                bm = bmesh.new()
+                for v in verts:
+                    bm.verts.new((v[0][0], v[0][1], 0))
+                bm.faces.new(bm.verts)
+                bm.faces.ensure_lookup_table()
+                bm.normal_update()
+                
+                bm.faces[0].select = True
+                me = bpy.data.meshes.new("")
+                bm.to_mesh(me)
+                #Create a new object from mesh
+                ob = bpy.data.objects.new("", me)
+                bpy.context.collection.objects.link(ob)
 
 
-classes = [MyProperties, ST_PT_Panel, ST_OP_LoadMatrix, ST_OP_CleanScene, ST_OP_CreateSkyline]
+        return {'FINISHED'}
+
+
+classes = [MyProperties, ST_PT_Panel, ST_OP_CleanScene, ST_OP_CreateSkylineFromMatrix]
 
 def register():
     for c in classes:
